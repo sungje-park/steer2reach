@@ -1,0 +1,12 @@
+**/.DS_Store
+**/__pycache__
+carc/slurm*
+**/wandb
+**/.vscode
+**/**.job
+**/.conda
+**/*.png
+**/*.ipynb
+**/runs
+**/*.csv
+**/*.npz
