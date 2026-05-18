@@ -39,7 +39,7 @@ class HJI_Solver():
     
     def init_wandb(self):
         print("Initializing wandb")
-        wandb.init(project="hji",config=vars(self.config))
+        wandb.init(project="s2r",config=vars(self.config))
     
     def init_solver(self,key:Key):
         params = self.init_model(key)
@@ -443,20 +443,21 @@ class HJI_Solver():
         return (loss*self.config.ic_scale,)
 
     def fspinns_loss(self,params,key:Key):
-        x_pde,_ = self.sample_domain_t0(key,self.config.batch_pde)
-        dt = jnp.zeros((self.config.batch_pde, self.config.traj_len + 1, 1))
-        dw = jnp.zeros((self.config.batch_pde, self.config.traj_len + 1, self.config.d_in))
+        rollout_traj_count = self.config.batch_traj
+        x_traj,_ = self.sample_domain_t0(key,rollout_traj_count)
+        dt = jnp.zeros((rollout_traj_count, self.config.traj_len + 1, 1))
+        dw = jnp.zeros((rollout_traj_count, self.config.traj_len + 1, self.config.d_in))
         dt = dt.at[:, 1:, :].set(self.config.delta_t)
         dw = dw.at[:, 1:, :].set(
             jnp.sqrt(self.config.delta_t)
             * jax.random.normal(
                 key.newkey(),
-                (self.config.batch_pde, self.config.traj_len, self.config.d_in),
+                (rollout_traj_count, self.config.traj_len, self.config.d_in),
             )
         )
         t = jnp.cumsum(dt, axis=1)
-        x = jnp.zeros((self.config.batch_pde, self.config.traj_len + 1, self.config.d_in))
-        x = x.at[:, 0, :].set(x_pde)
+        x = jnp.zeros((rollout_traj_count, self.config.traj_len + 1, self.config.d_in))
+        x = x.at[:, 0, :].set(x_traj)
         smooth_controls = self._use_smooth_controls(training=True)
 
         def loop(i, input):
@@ -479,8 +480,20 @@ class HJI_Solver():
         x = jnp.reshape(x, (-1, self.config.d_in))
         t = jnp.reshape(t, (-1, 1))
         temp = jnp.concatenate([x, t], axis=-1)
+        n_candidates = temp.shape[0]
         if self.config.random_sample:
-            temp = jax.random.choice(key.newkey(), temp, (self.config.batch_pde,), axis=0)
+            temp = jax.random.choice(
+                key.newkey(),
+                temp,
+                (self.config.batch_pde,),
+                replace=self.config.batch_pde > n_candidates,
+                axis=0,
+            )
+        elif self.config.batch_pde < n_candidates:
+            temp = temp[: self.config.batch_pde]
+        elif self.config.batch_pde > n_candidates:
+            reps = (self.config.batch_pde + n_candidates - 1) // n_candidates
+            temp = jnp.tile(temp, (reps, 1))[: self.config.batch_pde]
         x = temp[:, 0:-1]
         t = temp[:, -1:]
 
